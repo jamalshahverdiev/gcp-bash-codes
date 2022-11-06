@@ -1,0 +1,60 @@
+version: "2.1"
+jobs:
+  upload_files:
+    circleci_ip_ranges: true
+    docker:
+      - image: hashicorp/terraform:1.1.5
+    steps:
+      - checkout
+      - run:
+          name: Copy code files to SSH Jumper server
+          command: |
+            apk add sshpass
+            for server in $FW_SSH_HOST $SSH_HOST; do
+              for path in $FIREWALL_CODE_PATH $CODE_PATH; do 
+                sshpass -p ${CIRCLECI_SSH_PASS} \
+                  scp -oStrictHostKeyChecking=no \
+                  -r GCloud/${path}/ ${SSH_USER}@${server}:~/ 
+              done
+            done
+  create_users:
+    circleci_ip_ranges: true
+    docker:
+      - image: hashicorp/terraform:1.1.5
+    steps:
+      - run:
+          name: Add users to SSH Jumper server
+          command: |
+            apk add sshpass
+            sshpass -p ${CIRCLECI_SSH_PASS} ssh -oStrictHostKeyChecking=no \
+             ${SSH_USER}@${SSH_HOST} "cd ~/${CODE_PATH}; sudo bash ./add_ssh_users.sh stage"
+            sshpass -p ${CIRCLECI_SSH_PASS} ssh -oStrictHostKeyChecking=no \
+              ${SSH_USER}@${FW_SSH_HOST} "cd ~/${CODE_PATH}; sudo bash ./add_ssh_users.sh prod"
+            sshpass -p ${CIRCLECI_SSH_PASS} ssh -oStrictHostKeyChecking=no \
+             ${SSH_USER}@${FW_SSH_HOST} "cd ~/${FIREWALL_CODE_PATH}; sudo bash ./add_ssh_rules.sh prod"
+
+workflows:
+  version: 2
+
+  apply_ssh_users:
+    jobs:
+      - upload_files:
+          context:
+           - SRE
+          filters:
+            branches:
+              only: master
+      - create_users:
+          context:
+           - SRE
+          filters:
+            branches:
+              only: master
+          requires:
+            - upload_files
+
+experimental:
+  notify:
+    branches:
+      only:
+        - master
